@@ -212,31 +212,64 @@ def pairwise_distances_within_file(df: pd.DataFrame, rate_hz: float = 10.0) -> n
 # ---------------------------------------------------------------------------
 # Distribution-style proxemics plot (matches the reference figures)
 # ---------------------------------------------------------------------------
+# (line_color, fill_color) pairs -- navy/lavender first (matches "Face to Face"
+# in reference figures), tan/orange second (matches "XR Mediated"), then extra
+# pairs for 3+-way comparisons.
+DEFAULT_LINE_FILL_COLORS = [
+    ("#332a6e", "#b6ade0"),
+    ("#d98f3f", "#f4c896"),
+    ("#3f8f6e", "#a8dcc6"),
+    ("#b23b3b", "#e8a3a3"),
+]
+
+
 def plot_proxemic_distribution(ax, dist_by_label: dict[str, np.ndarray], title: str,
-                                colors: Optional[dict] = None, xmax: float = 4.0, bins: int = 50):
-    default_colors = ["#8c7dd6", "#e8a26b", "#7ec9b0", "#e07a7a"]
+                                colors: Optional[dict] = None, xmax: float = 7.0, bins: int = 70,
+                                ymax: Optional[float] = None, caption: Optional[str] = None):
+    """Smoothed-histogram line + fill (not bars) per label, Hall-zone boundary
+    lines, matching the 'Face to Face vs XR Mediated' reference style."""
     for i, (label, dists) in enumerate(dist_by_label.items()):
         dists = dists[np.isfinite(dists)]
         if len(dists) == 0:
             continue
-        color = (colors or {}).get(label, default_colors[i % len(default_colors)])
-        ax.hist(dists, bins=bins, range=(0, xmax), density=True, alpha=0.35,
-                color=color, edgecolor=color, linewidth=0.5, label=label)
-        if len(dists) > 5 and np.std(dists) > 1e-9:
-            kde = gaussian_kde(dists)
-            xs = np.linspace(0, xmax, 300)
-            ax.plot(xs, kde(xs), color=color, linewidth=1.6)
-    ymax = ax.get_ylim()[1]
+        line_color, fill_color = (colors or {}).get(label, DEFAULT_LINE_FILL_COLORS[i % len(DEFAULT_LINE_FILL_COLORS)])
+        counts, edges = np.histogram(dists, bins=bins, range=(0, xmax), density=True)
+        centers = (edges[:-1] + edges[1:]) / 2
+        # Pad to the axis edges (x=0 and x=xmax) at height 0 so the fill/line
+        # touches both edges flush instead of leaving a half-bin-width gap.
+        x_plot = np.concatenate([[0.0], centers, [xmax]])
+        y_plot = np.concatenate([[0.0], counts, [0.0]])
+        ax.plot(x_plot, y_plot, color=line_color, linewidth=1.3, label=label)
+        ax.fill_between(x_plot, y_plot, 0, color=fill_color, alpha=0.45, linewidth=0)
+
+    ax.set_xlim(0, xmax)
+    ax.margins(x=0)
+    if ymax is not None:
+        ax.set_ylim(0, ymax)
+    else:
+        ax.set_ylim(bottom=0)
+    top = ax.get_ylim()[1]
+    n_labels = len(dist_by_label)
+    legend_top = 0.93
+    legend_bottom = legend_top - 0.09 * max(n_labels, 1) - 0.03  # rough legend box height
     for boundary, label in HALL_BOUNDARIES:
         if boundary <= xmax:
             ax.axvline(boundary, color="black", linewidth=1.0)
-            ax.text(boundary, ymax * 0.97, label, rotation=90, va="top", ha="right",
-                     fontsize=7.5, color="black")
-    ax.set_xlim(0, xmax)
+            # A legend anchored at upper-right will collide with a boundary
+            # label that also falls in the top-right corner (e.g. "Social
+            # Distance" when xmax is small) -- drop that label below the
+            # legend box instead of behind it.
+            in_legend_corner = boundary >= xmax * 0.8
+            y_frac = (legend_bottom - 0.04) if in_legend_corner else 0.97
+            ax.text(boundary, top * y_frac, label.replace("\n", " "), rotation=90, va="top", ha="right",
+                     fontsize=8, color="black")
     ax.set_xlabel("Distance in Meters")
     ax.set_ylabel("Probability Distribution")
     ax.set_title(title)
-    ax.legend(fontsize=8, loc="upper right")
+    ax.legend(fontsize=9, loc="upper right", bbox_to_anchor=(1.0, legend_top))
+    if caption:
+        ax.text(0.5, -0.16, caption, transform=ax.transAxes, ha="center", va="top",
+                 fontsize=11, style="italic")
 
 
 # ---------------------------------------------------------------------------
