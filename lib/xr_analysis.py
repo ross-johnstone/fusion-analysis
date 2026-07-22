@@ -20,6 +20,7 @@ import scipy.stats
 import scipy.spatial.distance
 
 HEAD_POS_COLS = ["position_x", "position_y", "position_z"]
+DIRECTION_COLS = ["direction_x", "direction_y", "direction_z"]
 HAND_COLS = {
     "left": ["left_hand_position_x", "left_hand_position_y", "left_hand_position_z"],
     "right": ["right_hand_position_x", "right_hand_position_y", "right_hand_position_z"],
@@ -67,7 +68,7 @@ def resample_session(df: pd.DataFrame, rate_hz: float) -> dict[str, pd.DataFrame
         raise ValueError("Participants' tracked time ranges do not overlap.")
     grid = np.arange(t0, t1, 1.0 / rate_hz)
 
-    interp_cols = HEAD_POS_COLS + HAND_COLS["left"] + HAND_COLS["right"]
+    interp_cols = HEAD_POS_COLS + DIRECTION_COLS + HAND_COLS["left"] + HAND_COLS["right"]
     out = {}
     for p in participants:
         d = (df[df["participant_id"] == p]
@@ -90,6 +91,10 @@ def resample_session(df: pd.DataFrame, rate_hz: float) -> dict[str, pd.DataFrame
 def has_hand_data(resampled_p: pd.DataFrame) -> bool:
     cols = HAND_COLS["left"] + HAND_COLS["right"]
     return resampled_p[cols].notna().any().any()
+
+
+def has_direction_data(resampled_p: pd.DataFrame) -> bool:
+    return resampled_p[DIRECTION_COLS].notna().any().any()
 
 
 # ---------------------------------------------------------------------------
@@ -196,6 +201,54 @@ def social_synchrony(resampled: dict[str, pd.DataFrame], fps: float,
             if np.isfinite(r):
                 rows.append({"participant_a": pa, "participant_b": pb, "pearson_r": r})
     return pd.DataFrame(rows)
+
+
+# ---------------------------------------------------------------------------
+# 2b. Aggregate direction-sync score (all pairs) -- ONE score per pair, not
+#     windowed. Adapted from a validated methodology: align two participants
+#     on a shared time base, take the frame-to-frame delta of their facing
+#     *direction* vector (not position), and Pearson-correlate each axis's
+#     delta series between the pair. corr_agg = corr_x + corr_y + corr_z.
+#     This is what "social synchrony" reports in the notebooks now --
+#     temporal_synchrony (above) is untouched.
+# ---------------------------------------------------------------------------
+def direction_sync_score(dir_a: np.ndarray, dir_b: np.ndarray, min_frames: int = 5) -> dict:
+    """`dir_a`, `dir_b` -- (N, 3) direction-vector arrays for two participants,
+    already on the same shared time grid (e.g. from `resample_session`).
+    Returns {'corr_agg', 'corr_x', 'corr_y', 'corr_z', 'n_frames'}."""
+    valid = np.isfinite(dir_a).all(axis=1) & np.isfinite(dir_b).all(axis=1)
+    a, b = dir_a[valid], dir_b[valid]
+    if len(a) < min_frames:
+        return {"corr_agg": np.nan, "corr_x": np.nan, "corr_y": np.nan, "corr_z": np.nan, "n_frames": len(a)}
+    delta_a = np.diff(a, axis=0)
+    delta_b = np.diff(b, axis=0)
+    corr_x = pearson_safe(delta_a[:, 0], delta_b[:, 0])
+    corr_y = pearson_safe(delta_a[:, 1], delta_b[:, 1])
+    corr_z = pearson_safe(delta_a[:, 2], delta_b[:, 2])
+    per_axis = np.array([corr_x, corr_y, corr_z])
+    # Sums the defined axes (nansum, not a plain sum): some formats only track
+    # a floor-plane facing direction (direction_y is identically 0 -> zero
+    # variance -> undefined correlation on that axis), and a plain sum would
+    # make corr_agg NaN for every pair in those datasets. An axis with real
+    # signal in both formats we've seen (fashion, quest) still contributes
+    # normally; nansum only changes behavior for axes that carry no signal.
+    corr_agg = np.nansum(per_axis) if np.isfinite(per_axis).any() else np.nan
+    return {"corr_agg": corr_agg, "corr_x": corr_x, "corr_y": corr_y, "corr_z": corr_z, "n_frames": len(a)}
+
+
+def direction_sync_all_pairs(resampled: dict[str, pd.DataFrame], min_frames: int = 5) -> pd.DataFrame:
+    """All-pairs generalization: one row per pair with corr_agg/corr_x/corr_y/corr_z.
+    Pairs where either participant has no direction data at all are skipped
+    (not an error -- direction/facing vectors are format-dependent, same
+    pattern as hand tracking)."""
+    dir_havers = [p for p, d in resampled.items() if has_direction_data(d)]
+    rows = []
+    for pa, pb in all_pairs(dir_havers):
+        dir_a = resampled[pa][DIRECTION_COLS].to_numpy()
+        dir_b = resampled[pb][DIRECTION_COLS].to_numpy()
+        result = direction_sync_score(dir_a, dir_b, min_frames=min_frames)
+        rows.append({"participant_a": pa, "participant_b": pb, **result})
+    return pd.DataFrame(rows, columns=["participant_a", "participant_b", "corr_agg", "corr_x", "corr_y", "corr_z", "n_frames"])
 
 
 # ---------------------------------------------------------------------------

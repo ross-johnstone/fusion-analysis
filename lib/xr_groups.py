@@ -273,6 +273,46 @@ def plot_proxemic_distribution(ax, dist_by_label: dict[str, np.ndarray], title: 
 
 
 # ---------------------------------------------------------------------------
+# Aggregate direction-sync score boxplot (matches the magma/white-median/
+# no-spines reference style) -- one box per label, values are per-pair
+# corr_agg scores (or any array of scores you hand it).
+# ---------------------------------------------------------------------------
+def plot_sync_score_boxplot(ax, data_by_label: dict, title: str,
+                             ylabel: str = "Aggregate Direction-Sync Score",
+                             zero_line: bool = False, rotate_labels: bool = False):
+    import matplotlib.pyplot as plt
+
+    labels = list(data_by_label.keys())
+    data = []
+    for lab in labels:
+        arr = np.asarray(data_by_label[lab], dtype=float)
+        data.append(arr[np.isfinite(arr)])
+
+    bp = ax.boxplot(data, labels=labels, patch_artist=True, showfliers=False)
+    cmap = plt.get_cmap("magma")
+    shades = np.linspace(0.25, 0.75, max(len(labels), 2))[:len(labels)] if len(labels) > 1 else [0.4]
+    for patch, shade in zip(bp["boxes"], shades):
+        patch.set_facecolor(cmap(shade))
+        patch.set_alpha(0.55)
+    for median in bp["medians"]:
+        median.set_color("white")
+        median.set_linewidth(2)
+
+    if zero_line:
+        ylim = ax.get_ylim()
+        ax.axhline(y=0, color="r", linewidth=1, zorder=0)
+        ax.fill_between([0.4, len(labels) + 0.6], 0, ylim[0], color="red", alpha=0.08, zorder=0)
+        ax.set_ylim(ylim)
+
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    ax.set_ylabel(ylabel)
+    ax.set_title(title)
+    if rotate_labels:
+        ax.tick_params(axis="x", rotation=45)
+
+
+# ---------------------------------------------------------------------------
 # Locus of Focus (LOF) export
 # ---------------------------------------------------------------------------
 # Axis convention swap: our CSV/pkl exports use x/y/z with y = up; Locus of

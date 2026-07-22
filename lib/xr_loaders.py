@@ -62,6 +62,7 @@ UNIFIED_COLUMNS = [
     "session_id", "source_format", "participant_id", "t_s",
     "position_x", "position_y", "position_z",
     "rotation_x", "rotation_y", "rotation_z",
+    "direction_x", "direction_y", "direction_z",
     "left_hand_position_x", "left_hand_position_y", "left_hand_position_z",
     "right_hand_position_x", "right_hand_position_y", "right_hand_position_z",
     "left_hand_rotation_x", "left_hand_rotation_y", "left_hand_rotation_z",
@@ -160,6 +161,9 @@ def _load_quest_csv(path: PathLike, session_id: str) -> pd.DataFrame:
     euler = _quat_to_euler_deg(raw["rotation_x"], raw["rotation_y"],
                                 raw["rotation_z"], raw["rotation_w"])
     out[["rotation_x", "rotation_y", "rotation_z"]] = euler
+    for c in ["direction_x", "direction_y", "direction_z"]:
+        if c in raw.columns:
+            out[c] = raw[c]
     # No hand tracking in this format -- left as NaN.
     if "trial_id" in raw.columns:
         out["session_id"] = session_id + "_trial" + raw["trial_id"].astype(str)
@@ -181,7 +185,7 @@ def _normalize_pkl_long_df(raw: pd.DataFrame, session_id: str, source_format: st
     out["source_format"] = source_format
     out["participant_id"] = raw["uuid"].astype(str)
     out["t_s"] = pd.to_datetime(raw["timestamp"], utc=True, format="mixed").astype("int64") / 1e9
-    for c in ["position_x", "position_y", "position_z"]:
+    for c in ["position_x", "position_y", "position_z", "direction_x", "direction_y", "direction_z"]:
         if c in raw.columns:
             out[c] = raw[c]
     # Head rotation: prefer a populated quaternion field if one exists in
